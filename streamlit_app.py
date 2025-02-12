@@ -86,8 +86,8 @@ def analyze_performance(df):
 def main():
     st.title("Enhanced Program Manager Visit Analysis Dashboard")
     
-    # Sidebar for weights configuration
-    st.sidebar.header("Scoring Weights")
+    # Sidebar for weights and filters
+    st.sidebar.header("Configuration")
     
     # Teacher weights
     st.sidebar.subheader("Teacher Observation Weights")
@@ -115,26 +115,111 @@ def main():
             # Read data
             df = pd.read_excel(uploaded_file)
             
+            # Display raw data option
+            if st.checkbox("Show raw data"):
+                st.write("Raw Data:")
+                st.write(df)
+                st.write("Available columns:", df.columns.tolist())
+            
             # Calculate weighted scores
             df = calculate_weighted_scores(df, teacher_weights, student_weights)
             
-            # Analyze performance
-            performance_metrics = analyze_performance(df)
+            # Check required columns
+            required_cols = ['Your Name', 'School Name']
+            missing_cols = [col for col in required_cols if col not in df.columns]
+            
+            if missing_cols:
+                st.error(f"Missing required columns: {missing_cols}")
+                st.stop()
+            
+            # Sidebar filters
+            st.sidebar.header("Filters")
+            selected_pm = st.sidebar.multiselect(
+                "Select Program Managers",
+                options=sorted(df['Your Name'].unique()),
+                default=sorted(df['Your Name'].unique())
+            )
+            
+            selected_schools = st.sidebar.multiselect(
+                "Select Schools",
+                options=sorted(df['School Name'].unique()),
+                default=sorted(df['School Name'].unique())
+            )
+            
+            # Filter data
+            filtered_df = df[
+                (df['Your Name'].isin(selected_pm)) &
+                (df['School Name'].isin(selected_schools))
+            ]
+            
+            # Overall metrics
+            st.header("Summary Metrics")
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                st.metric("Total Visits", len(filtered_df))
+            with col2:
+                st.metric("Unique Schools", len(filtered_df['School Name'].unique()))
+            with col3:
+                st.metric("Average Teacher Score", f"{filtered_df['teacher_score'].mean():.1f}%")
+            with col4:
+                st.metric("Average Student Score", f"{filtered_df['student_score'].mean():.1f}%")
             
             # Create tabs
-            tab1, tab2, tab3 = st.tabs(["Performance Overview", "School Rankings", "Detailed Analysis"])
+            tab1, tab2, tab3, tab4 = st.tabs(["PM Visit Analysis", "Performance Overview", "School Rankings", "School Details"])
             
             with tab1:
+                st.subheader("Program Manager Visit Analysis")
+                
+                # Visits by PM
+                visits_by_pm = pd.DataFrame(filtered_df['Your Name'].value_counts()).reset_index()
+                visits_by_pm.columns = ['Program Manager', 'Visits']
+                
+                fig_visits = px.bar(
+                    visits_by_pm,
+                    x='Program Manager',
+                    y='Visits',
+                    title='Number of Visits by Program Manager'
+                )
+                st.plotly_chart(fig_visits, use_container_width=True)
+                
+                # Visits by School
+                visits_by_school = pd.DataFrame(filtered_df['School Name'].value_counts()).reset_index()
+                visits_by_school.columns = ['School', 'Visits']
+                
+                fig_schools = px.bar(
+                    visits_by_school,
+                    x='School',
+                    y='Visits',
+                    title='Number of Visits by School'
+                )
+                fig_schools.update_layout(xaxis_tickangle=-45)
+                st.plotly_chart(fig_schools, use_container_width=True)
+                
+                # PM Performance Comparison
+                if 'teacher_score' in filtered_df.columns:
+                    pm_performance = filtered_df.groupby('Your Name').agg({
+                        'teacher_score': 'mean',
+                        'student_score': 'mean',
+                        'overall_score': 'mean'
+                    }).round(2)
+                    
+                    st.subheader("PM Performance Metrics")
+                    st.dataframe(pm_performance)
+            
+            with tab2:
                 st.subheader("Performance Overview")
                 
                 # Performance distribution
                 fig_dist = px.histogram(
-                    performance_metrics,
+                    filtered_df,
                     x='overall_score',
                     nbins=20,
                     title='Distribution of School Performance Scores'
                 )
                 st.plotly_chart(fig_dist, use_container_width=True)
+                
+                # Performance metrics by school
+                performance_metrics = analyze_performance(filtered_df)
                 
                 # Top performing schools
                 st.subheader("Top 5 Performing Schools")
@@ -146,7 +231,7 @@ def main():
                 bottom_schools = performance_metrics.nsmallest(5, 'overall_score')
                 st.dataframe(bottom_schools.round(2))
             
-            with tab2:
+            with tab3:
                 st.subheader("School Rankings")
                 
                 # Performance quartile analysis
@@ -163,16 +248,16 @@ def main():
                 rankings = performance_metrics.sort_values('overall_score', ascending=False)
                 st.dataframe(rankings.round(2))
             
-            with tab3:
-                st.subheader("Detailed Analysis")
+            with tab4:
+                st.subheader("School Details")
                 
                 # School selector
                 selected_school = st.selectbox(
                     "Select a school for detailed analysis",
-                    options=sorted(df['School Name'].unique())
+                    options=sorted(filtered_df['School Name'].unique())
                 )
                 
-                school_data = df[df['School Name'] == selected_school]
+                school_data = filtered_df[filtered_df['School Name'] == selected_school]
                 
                 # School metrics
                 col1, col2, col3 = st.columns(3)
@@ -183,8 +268,13 @@ def main():
                 with col3:
                     st.metric("Overall Score", f"{school_data['overall_score'].mean():.1f}%")
                 
-                # Score trends over time
+                # Visit Timeline
                 if 'Date of Visit ' in school_data.columns:
+                    st.subheader("Visit Timeline")
+                    timeline_data = school_data[['Date of Visit ', 'Your Name', 'teacher_score', 'student_score', 'overall_score']].sort_values('Date of Visit ')
+                    st.dataframe(timeline_data.round(2))
+                    
+                    # Score trends over time
                     st.subheader("Score Trends Over Time")
                     school_data['Date of Visit '] = pd.to_datetime(school_data['Date of Visit '])
                     fig_trends = px.line(
